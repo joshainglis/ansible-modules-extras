@@ -163,7 +163,7 @@ options:
     default: 'root'
     required: false
     aliases: []
-  authorised_key_user:
+  tag:
     description:
      - comma separated list of tags
     default: null

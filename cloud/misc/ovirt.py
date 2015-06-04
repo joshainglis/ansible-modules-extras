@@ -295,10 +295,10 @@ def add_tags(conn, tags):
     :type conn: ovirtsdk.api.API
     """
     if tags:
-        new_tags = {tag.strip().lower() for tag in tags.strip().replace(" ", "_").split(',')}
+        new_tags = set([tag.strip().lower() for tag in tags.strip().replace(" ", "_").split(',')])
 
         try:
-            existing_tags = {tag.get_name() for tag in conn.tags.list()}
+            existing_tags = set([tag.get_name() for tag in conn.tags.list()])
         except Exception:
             print ("Could not get existing tags from server")
             sys.exit(1)

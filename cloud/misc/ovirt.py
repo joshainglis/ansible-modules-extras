@@ -163,6 +163,12 @@ options:
     default: 'root'
     required: false
     aliases: []
+  authorised_key_user:
+    description:
+     - comma separated list of tags
+    default: null
+    required: false
+    aliases: []
 
 requirements:
   - "python >= 2.6"
@@ -288,27 +294,26 @@ def add_tags(conn, tags):
 
     :type conn: ovirtsdk.api.API
     """
-    new_tags = {tag.strip().lower() for tag in tags.strip().replace(" ", "_").split(',')}
+    if tags:
+        new_tags = {tag.strip().lower() for tag in tags.strip().replace(" ", "_").split(',')}
 
-    try:
-        existing_tags = {tag.get_name() for tag in conn.tags.list()}
-    except Exception:
-        print ("Could not get existing tags from server")
-        sys.exit(1)
-    else:
-        tags_to_add = []
-        for tag in new_tags:
-            if tag in existing_tags:
-                tags_to_add.append(conn.tags.get(name=tag))
-            else:
-                try:
-                    tags_to_add.append(conn.tags.add(params.Tag(name=tag)))
-                except:
-                    print("Failed to add tag to ovirt")
-                    sys.exit(1)
-        return params.Tags(tag=tags_to_add)
-
-
+        try:
+            existing_tags = {tag.get_name() for tag in conn.tags.list()}
+        except Exception:
+            print ("Could not get existing tags from server")
+            sys.exit(1)
+        else:
+            tags_to_add = []
+            for tag in new_tags:
+                if tag in existing_tags:
+                    tags_to_add.append(conn.tags.get(name=tag))
+                else:
+                    try:
+                        tags_to_add.append(conn.tags.add(params.Tag(name=tag)))
+                    except:
+                        print("Failed to add tag to ovirt")
+                        sys.exit(1)
+            return params.Tags(tag=tags_to_add)
 
 
 # ------------------------------------------------------------------- #

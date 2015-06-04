@@ -160,7 +160,7 @@ options:
   authorised_key_user:
     description:
      - insert user key into authorised keys on instantiation
-    default: null
+    default: 'root'
     required: false
     aliases: []
 
@@ -202,6 +202,7 @@ action: ovirt >
     disk_int=virtio
     authorised_key_file=/home/user/.ssh/id_rsa.pub
     authorised_key_user=root
+    tags=test,ansible,jenkins
 
 # stopping an instance
 action: ovirt >
@@ -281,9 +282,38 @@ def get_cloud_init(auth_key, auth_key_user):
             sys.exit(1)
     return cloud_init
 
+
+def add_tags(conn, tags):
+    """
+
+    :type conn: ovirtsdk.api.API
+    """
+    new_tags = {tag.strip().lower() for tag in tags.strip().replace(" ", "_").split(',')}
+
+    try:
+        existing_tags = {tag.get_name() for tag in conn.tags.list()}
+    except Exception:
+        print ("Could not get existing tags from server")
+        sys.exit(1)
+    else:
+        tags_to_add = []
+        for tag in new_tags:
+            if tag in existing_tags:
+                tags_to_add.append(conn.tags.get(name=tag))
+            else:
+                try:
+                    tags_to_add.append(conn.tags.add(params.Tag(name=tag)))
+                except:
+                    print("Failed to add tag to ovirt")
+                    sys.exit(1)
+        return params.Tags(tag=tags_to_add)
+
+
+
+
 # ------------------------------------------------------------------- #
 # Create VM from scratch
-def create_vm(conn, vmtype, vmname, zone, vmdisk_size, vmcpus, vmnic, vmnetwork, vmmem, vmdisk_alloc, sdomain, vmcores, vmos, vmdisk_int, auth_key, auth_key_user):
+def create_vm(conn, vmtype, vmname, zone, vmdisk_size, vmcpus, vmnic, vmnetwork, vmmem, vmdisk_alloc, sdomain, vmcores, vmos, vmdisk_int, auth_key, auth_key_user, tags):
     if vmdisk_alloc == 'thin':
         # define VM params
         vmparams = params.VM(
@@ -295,6 +325,7 @@ def create_vm(conn, vmtype, vmname, zone, vmdisk_size, vmcpus, vmnic, vmnetwork,
             cpu=params.CPU(topology=params.CpuTopology(cores=int(vmcores))),
             type_=vmtype,
             initialization=get_cloud_init(auth_key, auth_key_user),
+            tags=add_tags(conn, tags)
         )
 
         # define disk params
@@ -305,7 +336,7 @@ def create_vm(conn, vmtype, vmname, zone, vmdisk_size, vmcpus, vmnic, vmnetwork,
             interface=vmdisk_int,
             type_="System",
             format='cow',
-            storage_domains=params.StorageDomains(storage_domain=[conn.storagedomains.get(name=sdomain)])
+            storage_domains=params.StorageDomains(storage_domain=[conn.storagedomains.get(name=sdomain)]),
         )
         # define network parameters
         network_net = params.Network(name=vmnetwork)
@@ -321,6 +352,7 @@ def create_vm(conn, vmtype, vmname, zone, vmdisk_size, vmcpus, vmnic, vmnetwork,
             cpu=params.CPU(topology=params.CpuTopology(cores=int(vmcores))),
             type_=vmtype,
             initialization=get_cloud_init(auth_key, auth_key_user),
+            tags=add_tags(conn, tags)
         )
 
         # define disk params
@@ -358,13 +390,14 @@ def create_vm(conn, vmtype, vmname, zone, vmdisk_size, vmcpus, vmnic, vmnetwork,
 
 
 # create an instance from a template
-def create_vm_template(conn, vmname, image, zone, auth_key, auth_key_user):
+def create_vm_template(conn, vmname, image, zone, auth_key, auth_key_user, tags):
     vmparams = params.VM(
         name=vmname,
         cluster=conn.clusters.get(name=zone),
         template=conn.templates.get(name=image),
         disks=params.Disks(clone=True),
         initialization=get_cloud_init(auth_key, auth_key_user),
+        tags=add_tags(conn, tags)
     )
     try:
         conn.vms.add(vmparams)
@@ -450,7 +483,8 @@ def main():
             sdomain             = dict(),
             region              = dict(),
             authorised_key_file = dict(),
-            authorised_key_user = dict(default='root')
+            authorised_key_user = dict(default='root'),
+            tags                = dict()
         ),
     )
 
@@ -476,6 +510,7 @@ def main():
     region        = module.params['region']              # oVirt Datacenter
     auth_key_file = module.params['authorised_key_file'] # Instantiate with given pubkey in authorised hosts
     auth_key_user = module.params['authorised_key_user'] # user account associated with the auth_key
+    tags          = module.params['tags']                # tags to be associated with the VM
 
     #initialize connection
     c = conn(url+"/api", user, password)
@@ -483,11 +518,11 @@ def main():
     if state == 'present':
         if get_vm(c, vmname) == "empty":
             if resource_type == 'template':
-                create_vm_template(c, vmname, image, zone, auth_key_file, auth_key_user)
+                create_vm_template(c, vmname, image, zone, auth_key_file, auth_key_user, tags)
                 module.exit_json(changed=True, msg="deployed VM %s from template %s"  % (vmname,image))
             elif resource_type == 'new':
                 # FIXME: refactor, use keyword args.
-                create_vm(c, vmtype, vmname, zone, vmdisk_size, vmcpus, vmnic, vmnetwork, vmmem, vmdisk_alloc, sdomain, vmcores, vmos, vmdisk_int, auth_key_file, auth_key_user)
+                create_vm(c, vmtype, vmname, zone, vmdisk_size, vmcpus, vmnic, vmnetwork, vmmem, vmdisk_alloc, sdomain, vmcores, vmos, vmdisk_int, auth_key_file, auth_key_user, tags)
                 module.exit_json(changed=True, msg="deployed VM %s from scratch"  % vmname)
             else:
                 module.exit_json(changed=False, msg="You did not specify a resource type")

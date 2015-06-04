@@ -31,13 +31,11 @@ options:
      - the user to authenticate with
     default: null
     required: true
-    aliases: []
   url:
     description:
      - the url of the oVirt instance
     default: null
     required: true
-    aliases: []
   instance_name:
     description:
      - the name of the instance to use
@@ -49,26 +47,22 @@ options:
      - password of the user to authenticate with
     default: null
     required: true
-    aliases: []
   image:
     description:
      - template to use for the instance
     default: null
     required: false
-    aliases: []
   resource_type:
     description:
      - whether you want to deploy an image or create an instance from scratch.
     default: null
     required: false
-    aliases: []
     choices: [ 'new', 'template' ]
   zone:
     description:
      - deploy the image to this oVirt cluster
     default: null
     required: false
-    aliases: []
   instance_disksize:
     description:
      - size of the instance's disk in GB
@@ -111,14 +105,12 @@ options:
      - define if disk is thin or preallocated
     default: thin
     required: false
-    aliases: []
     choices: [ 'thin', 'preallocated' ]
   disk_int:
     description:
      - interface type of the disk
     default: virtio
     required: false
-    aliases: []
     choices: [ 'virtio', 'ide' ]
   instance_os:
     description:
@@ -137,38 +129,35 @@ options:
      - the Storage Domain where you want to create the instance's disk on.
     default: null
     required: false
-    aliases: []
   region:
     description:
      - the oVirt/RHEV datacenter where you want to deploy to
     default: null
     required: false
-    aliases: []
   state:
     description:
      - create, terminate or remove instances
     default: 'present'
     required: false
-    aliases: []
     choices: ['present', 'absent', 'shutdown', 'started', 'restarted']
   authorised_key_file:
     description:
      - absolute path to the public key to be inserted into authorised keys on instantiation
     default: null
     required: false
-    aliases: []
+    version_added: "2.0"
   authorised_key_user:
     description:
      - insert user key into authorised keys on instantiation
     default: 'root'
     required: false
-    aliases: []
+    version_added: "2.0"
   tag:
     description:
      - comma separated list of tags
     default: null
     required: false
-    aliases: []
+    version_added: "2.0"
 
 requirements:
   - "python >= 2.6"

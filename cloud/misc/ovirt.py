@@ -243,9 +243,17 @@ action: ovirt >
     user=admin@internal 
     password=secret 
     url=https://ovirt.example.com
-
-
 '''
+RETURN = '''
+ips:
+    description: List of IP Addresses
+    returned: success
+    type: list of strings
+    sample: [
+        "10.0.0.124"
+        ]
+'''
+
 try:
     # noinspection PyUnresolvedReferences
     from ovirtsdk.api import API

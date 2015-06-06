@@ -162,7 +162,7 @@ options:
   async:
     description:
      - If True, just send command to server. If false, wait for the correct state before continuing (Idempotent)
-    default: False
+    default: 'yes'
     required: false
     version_added: "2.0"
   poll_frequency:
@@ -180,7 +180,7 @@ options:
   wait_for_ip:
     description:
      - If not async, wait for the VM to provide its IP addresses before continuing (requires that VM image has "ovirt guest agent" installed)
-    default: False
+    default: 'no'
     required: false
     version_added: "2.0"
 

@@ -245,13 +245,57 @@ action: ovirt >
     url=https://ovirt.example.com
 '''
 RETURN = '''
-ips:
+instance_data:
     description: List of IP Addresses
     returned: success
-    type: list of strings
-    sample: [
-        "10.0.0.124"
-        ]
+    type: dictionary
+    contains:
+        uuid:
+            description: UUID of the instance
+            returned: success
+            type: string
+            sample: af824696-bdc0-46de-b7f1-44c0302960cd
+        id:
+            description: ID of the instance
+            returned: success
+            type: string
+            sample: af824696-bdc0-46de-b7f1-44c0302960cd
+        image:
+            description: Name of the instance's image
+            returned: success
+            type: string
+            sample: rhel_7x64
+        ips:
+            description: UUID of the instance
+            returned: success
+            type: list
+            sample: ["10.0.0.124"]
+        name:
+            description: Instance name
+            returned: success
+            type: string
+            sample: ansiblevm04
+        description:
+            description: A description of the instance
+            returned: success
+            type: string
+            sample: Some description
+        status:
+            description: UUID of the instance
+            returned: success
+            type: string
+            sample: up
+            choices: ['up', 'down', 'creating', 'starting' 'stopping', 'does_not_exist', 'unknown']
+        zone:
+            description: The ovirt cluster the instance is running on
+            returned: success
+            type: string
+            sample: local_cluster
+        tags:
+            description: Tags associated with the instance
+            returned: success
+            type: list
+            sample: ["dev", "jenkins"]
 '''
 
 try:
@@ -303,7 +347,7 @@ def connect(module):
 
     try:
         api = API(url=url, username=user, password=password, insecure=True)
-        api.test()
+        api.test(throw_exception=True)
     except:
         module.fail_json(msg=u"Could not connect to server: {}".format(url))
     else:
@@ -359,6 +403,7 @@ def add_tags(module, conn):
     """
     :type module: ansible.module_utils.basic.AnsibleModule
     :type conn: ovirtsdk.api.API
+    :rtype: list[ovirtsdk.infrastructure.brokers.Tag]
     """
     tags = module.params['tags']
 
@@ -372,14 +417,17 @@ def add_tags(module, conn):
         else:
             tags_to_add = []
             for tag in new_tags:
-                if tag in existing_tags:
-                    tags_to_add.append(conn.tags.get(name=tag))
-                else:
+                if tag not in existing_tags:
                     try:
-                        tags_to_add.append(conn.tags.add(params.Tag(name=tag)))
+                        conn.tags.add(params.Tag(name=tag))
                     except:
-                        module.fail_json(msg=u"Failed to add tag to ovirt")
-            return params.Tags(tag=tags_to_add)
+                        module.fail_json(msg=u"Failed to add tag '{}' to ovirt".format(tag))
+                try:
+                    infra_tag = conn.tags.get(name=tag)
+                    tags_to_add.append(infra_tag)
+                except:
+                    module.fail_json(msg=u"Failed to get tag '{}' from ovirt".format(tag))
+            return tags_to_add
 
 
 def recurse(module, conn, func):
@@ -428,7 +476,6 @@ def create_vm(module, conn):
             cpu=params.CPU(topology=params.CpuTopology(cores=int(instance_cores))),
             type_=instance_type,
             initialization=get_cloud_init(module),
-            tags=add_tags(module, conn)
         )
         vmdisk = params.Disk(
             size=1024 * 1024 * 1024 * int(instance_disksize),
@@ -451,7 +498,6 @@ def create_vm(module, conn):
             cpu=params.CPU(topology=params.CpuTopology(cores=int(instance_cores))),
             type_=instance_type,
             initialization=get_cloud_init(module),
-            tags=add_tags(module, conn)
         )
         vmdisk = params.Disk(
             size=1024 * 1024 * 1024 * int(instance_disksize),
@@ -482,6 +528,8 @@ def create_vm(module, conn):
     except:
         vm_remove(module, conn)
         module.fail_json(msg=u"Error adding nic")
+    for tag in add_tags(module, conn):
+        conn.vms.get(name=instance_name).tags.add(tag)
 
 
 def create_vm_template(module, conn):
@@ -501,9 +549,10 @@ def create_vm_template(module, conn):
         template=conn.templates.get(name=image),
         disks=params.Disks(clone=True),
         initialization=get_cloud_init(module),
-        tags=add_tags(module, conn)
     )
     conn.vms.add(vmparams)
+    for tag in add_tags(module, conn):
+        conn.vms.get(name=instance_name).tags.add(tag)
 
 
 def get_ips(module, conn):
@@ -522,6 +571,36 @@ def get_ips(module, conn):
         ips = []
     return ips
 
+def get_instance_data(module, conn):
+    """
+    :type module: ansible.module_utils.basic.AnsibleModule
+    :type conn: ovirtsdk.api.API
+    :rtype: dict
+    """
+    instance_name = module.params['instance_name']
+    inst = conn.vms.get(name=instance_name)
+
+    if inst is None:
+        return {}
+
+    inst.get_custom_properties()
+    ips = get_ips(module, conn)
+    tags = [x.get_name() for x in inst.get_tags().list()]
+
+    return {
+        'uuid': inst.get_id(),
+        'id': inst.get_id(),
+        'image': inst.get_os().get_type(),
+        'machine_type': inst.get_instance_type(),
+        'ips': ips,
+        'name': inst.get_name(),
+        'description': inst.get_description(),
+        'status': inst.get_status().get_state(),
+        'zone': conn.clusters.get(id=inst.get_cluster().get_id()).get_name(),
+        'tags': tags,
+        # Hosts don't have a public name, so we add an IP
+        'ansible_ssh_host': ips[0] if len(ips) > 0 else None
+    }
 
 
 def vm_start(module, conn):
@@ -660,6 +739,18 @@ def get_vm(module, conn):
 
     return "empty" if vm is None else vm.get_name()
 
+def finish(module, conn, changed, msg):
+    """
+    :type module: ansible.module_utils.basic.AnsibleModule
+    :type conn: ovirtsdk.api.API
+    :type changed: bool
+    :type msg: str
+    """
+    module.exit_json(
+        changed=changed,
+        msg=msg,
+        instance_data=get_instance_data(module, conn)
+    )
 
 def main():
     module = AnsibleModule(
@@ -793,115 +884,111 @@ def main():
     TRIES = int(module.params['poll_tries'])
 
     # initialize connection
-    try:
-        connection = connect(module)
-    except:
-        module.fail_json(msg=u"error connecting to the oVirt API")
-    else:
-        initial_status = vm_status(module, connection)
+    connection = connect(module)
+    initial_status = vm_status(module, connection)
 
-        def instantiate():
+    def instantiate():
+        if resource_type == 'template':
+            try:
+                create_vm_template(module, connection)
+            except:
+                module.fail_json(msg=u'error adding template {}'.format(image))
+        elif resource_type == 'new':
+            try:
+                create_vm(module, connection)
+            except:
+                module.fail_json(u"Failed to create VM: {}".format(instance_name))
+        else:
+            module.fail_json(msg=u"You did not specify a resource type")
+
+    if state == 'present':
+        if initial_status == "does_not_exist":
+            instantiate()
             if resource_type == 'template':
-                try:
-                    create_vm_template(module, connection)
-                except:
-                    module.fail_json(msg=u'error adding template {}'.format(image))
+                finish(
+                    module, connection,
+                    changed=True,
+                    msg=u"deployed VM {} from template {}".format(instance_name, image),
+                )
             elif resource_type == 'new':
-                try:
-                    create_vm(module, connection)
-                except:
-                    module.fail_json(u"Failed to create VM: {}".format(instance_name))
-            else:
-                module.fail_json(msg=u"You did not specify a resource type")
-
-        if state == 'present':
-            if initial_status == "does_not_exist":
-                instantiate()
-                if resource_type == 'template':
-                    module.exit_json(
-                        changed=True,
-                        msg=u"deployed VM {} from template {}".format(instance_name, image),
-                        ips=get_ips(module, connection)
-                    )
-                elif resource_type == 'new':
-                    module.exit_json(
-                        changed=True,
-                        msg=u"deployed VM {} from scratch".format(instance_name),
-                        ips=get_ips(module, connection)
-                    )
-            else:
-                module.exit_json(
-                    changed=False,
-                    msg=u"VM {} already exists".format(instance_name),
-                    ips=get_ips(module, connection)
-                )
-
-        if state == 'started':
-            if initial_status == 'up':
-                module.exit_json(
-                    changed=False,
-                    msg=u"VM {} is already running".format(instance_name),
-                    ips=get_ips(module, connection)
-                )
-            else:
-                if initial_status == 'does_not_exist':
-                    instantiate()
-                vm_start(module, connection)
-                module.exit_json(
+                finish(
+                    module, connection,
                     changed=True,
-                    msg=u"VM {0:s} started".format(instance_name),
-                    ips=get_ips(module, connection)
+                    msg=u"deployed VM {} from scratch".format(instance_name),
                 )
+        else:
+            finish(
+                module, connection,
+                changed=False,
+                msg=u"VM {} already exists".format(instance_name),
+            )
 
-        if state == 'shutdown':
-            if initial_status == 'down':
-                module.exit_json(
-                    changed=False,
-                    msg=u"VM {0:s} is already shutdown".format(instance_name),
-                    ips=get_ips(module, connection)
-                )
-            else:
-                if initial_status == 'does_not_exist':
-                    instantiate()
-                vm_stop(module, connection)
-                module.exit_json(
-                    changed=True,
-                    msg=u"VM {} is shutting down".format(instance_name),
-                    ips=get_ips(module, connection)
-                )
-
-        if state == 'restart':
-            if initial_status == 'up':
-                vm_restart(module, connection)
-                module.exit_json(
-                    changed=True,
-                    msg=u"VM {0:s} is restarted".format(instance_name),
-                    ips=get_ips(module, connection)
-                )
-            else:
-                if initial_status == 'does_not_exist':
-                    instantiate()
-                vm_restart(module, connection)
-                module.exit_json(
-                    changed=True,
-                    msg=u"VM {0:s} was started".format(instance_name),
-                    ips=get_ips(module, connection)
-                )
-
-        if state == 'absent':
+    if state == 'started':
+        if initial_status == 'up':
+            finish(
+                module, connection,
+                changed=False,
+                msg=u"VM {} is already running".format(instance_name),
+            )
+        else:
             if initial_status == 'does_not_exist':
-                module.exit_json(
-                    changed=False,
-                    msg=u"VM {0:s} does not exist".format(instance_name),
-                    ips=[]
-                )
-            else:
-                vm_remove(module, connection)
-                module.exit_json(
-                    changed=True,
-                    msg=u"VM {0:s} removed".format(instance_name),
-                    ips=[]
-                )
+                instantiate()
+            vm_start(module, connection)
+            finish(
+                module, connection,
+                changed=True,
+                msg=u"VM {0:s} started".format(instance_name),
+            )
+
+    if state == 'shutdown':
+        if initial_status == 'down':
+            finish(
+                module, connection,
+                changed=False,
+                msg=u"VM {0:s} is already shutdown".format(instance_name),
+            )
+        else:
+            if initial_status == 'does_not_exist':
+                instantiate()
+            vm_stop(module, connection)
+            finish(
+                module, connection,
+                changed=True,
+                msg=u"VM {} is shutting down".format(instance_name),
+            )
+
+    if state == 'restart':
+        if initial_status == 'up':
+            vm_restart(module, connection)
+            finish(
+                module, connection,
+                changed=True,
+                msg=u"VM {0:s} is restarted".format(instance_name),
+            )
+        else:
+            if initial_status == 'does_not_exist':
+                instantiate()
+            vm_restart(module, connection)
+            finish(
+                module, connection,
+                changed=True,
+                msg=u"VM {0:s} was started".format(instance_name),
+            )
+
+    if state == 'absent':
+        if initial_status == 'does_not_exist':
+            finish(
+                module, connection,
+                changed=False,
+                msg=u"VM {0:s} does not exist".format(instance_name),
+            )
+        else:
+            vm_remove(module, connection)
+            finish(
+                module, connection,
+                changed=True,
+                msg=u"VM {0:s} removed".format(instance_name),
+            )
 
 # import module snippets
 from ansible.module_utils.basic import *

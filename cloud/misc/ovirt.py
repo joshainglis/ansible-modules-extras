@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/python
 
 # (c) 2013, Vincent Van der Kussen <vincent at vanderkussen.org>
 #

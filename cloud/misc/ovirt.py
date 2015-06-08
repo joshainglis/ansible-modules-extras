@@ -907,6 +907,7 @@ def main():
     instance_name = module.params['instance_name']
     image = module.params['image']
     resource_type = module.params['resource_type']
+    wait_for_ip = module.boolean(module.params['wait_for_ip'])
 
     global TRIES
     TRIES = int(module.params['poll_tries'])
@@ -938,7 +939,7 @@ def main():
             )
 
     if state == 'started':
-        if initial_status == 'up':
+        if initial_status == 'up' and (not wait_for_ip or (wait_for_ip and get_ips(module, connection))):
             finish(
                 module, connection,
                 changed=False,

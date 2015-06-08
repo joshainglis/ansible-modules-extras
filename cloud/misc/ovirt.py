@@ -246,7 +246,7 @@ action: ovirt >
 '''
 RETURN = '''
 instance_data:
-    description: List of IP Addresses
+    description: Information about the VM Instance
     returned: success
     type: dictionary
     contains:
@@ -435,6 +435,7 @@ def recurse(module, conn, func):
     :type module: ansible.module_utils.basic.AnsibleModule
     :type conn: ovirtsdk.api.API
     :type func: (ansible.module_utils.basic.AnsibleModule, ovirtsdk.api.API) -> bool
+    :rtype: bool
     """
     global TRIES
     poll_frequency = float(module.params['poll_frequency'])
@@ -555,6 +556,29 @@ def create_vm_template(module, conn):
         conn.vms.get(name=instance_name).tags.add(tag)
 
 
+def instantiate(module, conn):
+    """
+    :type module: ansible.module_utils.basic.AnsibleModule
+    :type conn: ovirtsdk.api.API
+    """
+    instance_name = module.params['instance_name']
+    image = module.params['image']
+    resource_type = module.params['resource_type']
+
+    if resource_type == 'template':
+        try:
+            create_vm_template(module, conn)
+        except:
+            module.fail_json(msg=u'error adding template {}'.format(image))
+    elif resource_type == 'new':
+        try:
+            create_vm(module, conn)
+        except:
+            module.fail_json(u"Failed to create VM: {}".format(instance_name))
+    else:
+        module.fail_json(msg=u"You did not specify a resource type")
+
+
 def get_ips(module, conn):
     """
     get ip addresses from instance
@@ -570,6 +594,7 @@ def get_ips(module, conn):
     except AttributeError:
         ips = []
     return ips
+
 
 def get_instance_data(module, conn):
     """
@@ -620,7 +645,8 @@ def vm_start(module, conn):
     if TRIES <= 0:
         module.fail_json(msg=u"Ran out of poll_tries. {} is currently in state: '{}'".format(instance_name, state))
     if state == 'does_not_exist':
-        module.fail_json(msg=u"Cannot stop {} as it does not appear to exist on the server".format(instance_name))
+        instantiate(module, conn)
+        return recurse(module, conn, vm_start)
     elif state == 'unknown':
         module.fail_json(msg=u"{} is in an unknown state.".format(instance_name))
     elif state in ['creating', 'starting', 'stopping']:
@@ -654,7 +680,8 @@ def vm_stop(module, conn):
     if TRIES <= 0:
         module.fail_json(msg=u"Ran out of poll_tries. {} is currently in state: '{}'".format(instance_name, state))
     if state == 'does_not_exist':
-        module.fail_json(msg=u"Cannot stop {} as it does not appear to exist on the server".format(instance_name))
+        instantiate(module, conn)
+        return recurse(module, conn, vm_stop)
     elif state == 'unknown':
         module.fail_json(msg=u"{} is in an unknown state.".format(instance_name))
     elif state in ['creating', 'starting', 'stopping']:
@@ -665,7 +692,6 @@ def vm_stop(module, conn):
             return recurse(module, conn, vm_stop)
     elif state == 'down':
         return True
-
 
 
 def vm_restart(module, conn):
@@ -699,7 +725,7 @@ def vm_remove(module, conn):
     if state == 'does_not_exist':
         return True
     elif state == 'unknown':
-        vm.delete()
+        vm.delete(action=params.Action(force=True))
         return True if async else recurse(module, conn, vm_remove)
     elif state in ['creating', 'starting', 'stopping']:
         return recurse(module, conn, vm_remove)
@@ -739,6 +765,7 @@ def get_vm(module, conn):
 
     return "empty" if vm is None else vm.get_name()
 
+
 def finish(module, conn, changed, msg):
     """
     :type module: ansible.module_utils.basic.AnsibleModule
@@ -751,6 +778,7 @@ def finish(module, conn, changed, msg):
         msg=msg,
         instance_data=get_instance_data(module, conn)
     )
+
 
 def main():
     module = AnsibleModule(
@@ -873,7 +901,7 @@ def main():
     )
 
     if not HAS_LIB:
-        module.fail_json(msg=u'ovirtsdk required for this module')
+        module.fail_json(msg=u'ovirt-engine-sdk-python required for this module')
 
     state = module.params['state']
     instance_name = module.params['instance_name']
@@ -887,23 +915,9 @@ def main():
     connection = connect(module)
     initial_status = vm_status(module, connection)
 
-    def instantiate():
-        if resource_type == 'template':
-            try:
-                create_vm_template(module, connection)
-            except:
-                module.fail_json(msg=u'error adding template {}'.format(image))
-        elif resource_type == 'new':
-            try:
-                create_vm(module, connection)
-            except:
-                module.fail_json(u"Failed to create VM: {}".format(instance_name))
-        else:
-            module.fail_json(msg=u"You did not specify a resource type")
-
     if state == 'present':
         if initial_status == "does_not_exist":
-            instantiate()
+            instantiate(module, connection)
             if resource_type == 'template':
                 finish(
                     module, connection,
@@ -931,8 +945,6 @@ def main():
                 msg=u"VM {} is already running".format(instance_name),
             )
         else:
-            if initial_status == 'does_not_exist':
-                instantiate()
             vm_start(module, connection)
             finish(
                 module, connection,
@@ -948,8 +960,6 @@ def main():
                 msg=u"VM {0:s} is already shutdown".format(instance_name),
             )
         else:
-            if initial_status == 'does_not_exist':
-                instantiate()
             vm_stop(module, connection)
             finish(
                 module, connection,
@@ -966,8 +976,6 @@ def main():
                 msg=u"VM {0:s} is restarted".format(instance_name),
             )
         else:
-            if initial_status == 'does_not_exist':
-                instantiate()
             vm_restart(module, connection)
             finish(
                 module, connection,

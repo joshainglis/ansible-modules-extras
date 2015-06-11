@@ -389,6 +389,8 @@ class OvirtConnection(object):
     """
     :type module: ansible.module_utils.basic.AnsibleModule
     :type conn: ovirtsdk.api.API
+    :type tries: int
+    :type cloud_init_run: bool
     """
 
     def __init__(self, module):
@@ -398,9 +400,13 @@ class OvirtConnection(object):
         self.cloud_init_run = False
 
     def __enter__(self):
+        """
+        :rtype : OvirtConnection
+        """
         self.conn = self.connect()
         return self
 
+    # noinspection PyUnusedLocal,PyBroadException
     def __exit__(self, exc_type, exc_val, exc_tb):
         try:
             self.conn.disconnect()
@@ -428,6 +434,9 @@ class OvirtConnection(object):
             return api
 
     def _get_auth_key(self):
+        """
+        :rtype : str
+        """
         authorized_key_file = self.module.params['authorized_key_file']
 
         if authorized_key_file is not None:
@@ -445,6 +454,9 @@ class OvirtConnection(object):
                 )
 
     def _get_custom_script(self):
+        """
+        :rtype : str
+        """
         script_file = self.module.params['script_file']
 
         if script_file is not None:
@@ -655,7 +667,6 @@ class OvirtConnection(object):
     def get_ips(self):
         """
         get ip addresses from instance
-    
         :rtype: list[str]
         """
         instance_name = self.module.params['instance_name']
@@ -708,6 +719,9 @@ class OvirtConnection(object):
         }
 
     def vm_cloud_init(self):
+        """
+        :rtype : bool
+        """
         instance_name = self.module.params['instance_name']
         async = self.module.boolean(self.module.params['async'])
         wait_for_ip = self.module.boolean(self.module.params['wait_for_ip'])
@@ -745,6 +759,7 @@ class OvirtConnection(object):
     def vm_start(self):
         """
         start instance
+        :rtype : bool
         """
         instance_name = self.module.params['instance_name']
         async = self.module.boolean(self.module.params['async'])
@@ -777,6 +792,7 @@ class OvirtConnection(object):
     def vm_stop(self):
         """
         Stop instance
+        :rtype : bool
         """
         instance_name = self.module.params['instance_name']
         async = self.module.boolean(self.module.params['async'])
@@ -805,6 +821,7 @@ class OvirtConnection(object):
     def vm_restart(self):
         """
         restart instance
+        :rtype : bool
         """
         stopped = self.vm_stop()
         started = self.vm_start()
@@ -813,7 +830,7 @@ class OvirtConnection(object):
     def vm_remove(self):
         """
         remove an instance
-    
+        :rtype : bool
         """
         instance_name = self.module.params['instance_name']
         async = self.module.boolean(self.module.params['async'])
@@ -842,6 +859,7 @@ class OvirtConnection(object):
     def vm_status(self):
         """
         Get the VMs status
+        :rtype : bool
         """
         instance_name = self.module.params['instance_name']
 
@@ -854,6 +872,7 @@ class OvirtConnection(object):
     def get_vm(self):
         """
         Get VM object and return it's name if object exists
+        :rtype : str
         """
         instance_name = self.module.params['instance_name']
         vm = self.conn.vms.get(name=instance_name)

@@ -393,9 +393,19 @@ class OvirtConnection(object):
 
     def __init__(self, module):
         self.module = module
-        self.conn = self.connect()
+        self.conn = None
         self.tries = int(module.params['poll_tries'])
         self.cloud_init_run = False
+
+    def __enter__(self):
+        self.conn = self.connect()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        try:
+            self.conn.disconnect()
+        except:
+            pass
 
     # noinspection PyBroadException
     def connect(self):
@@ -999,88 +1009,87 @@ def main():
     resource_type = module.params['resource_type']
     wait_for_ip = module.boolean(module.params['wait_for_ip'])
 
-    ovirt = OvirtConnection(module)
+    with OvirtConnection(module) as ovirt:
+        initial_status = ovirt.vm_status()
 
-    initial_status = ovirt.vm_status()
+        if state == 'present':
+            if initial_status == "does_not_exist":
+                ovirt.instantiate()
+                if resource_type == 'template':
+                    ovirt.finish(
+                        changed=True,
+                        msg=u"deployed VM {} from template {}".format(instance_name, image),
+                    )
+                elif resource_type == 'new':
+                    ovirt.finish(
+                        changed=True,
+                        msg=u"deployed VM {} from scratch".format(instance_name),
+                    )
+            else:
+                ovirt.finish(
+                    changed=False,
+                    msg=u"VM {} already exists".format(instance_name),
+                )
 
-    if state == 'present':
-        if initial_status == "does_not_exist":
-            ovirt.instantiate()
-            if resource_type == 'template':
+        if state == 'started':
+            if initial_status == 'up' and (not wait_for_ip or (wait_for_ip and ovirt.get_ips())):
+                ovirt.finish(
+                    changed=False,
+                    msg=u"VM {} is already running".format(instance_name),
+                )
+            else:
+                ovirt.vm_start()
                 ovirt.finish(
                     changed=True,
-                    msg=u"deployed VM {} from template {}".format(instance_name, image),
+                    msg=u"VM {0:s} started".format(instance_name),
                 )
-            elif resource_type == 'new':
-                ovirt.finish(
-                    changed=True,
-                    msg=u"deployed VM {} from scratch".format(instance_name),
-                )
-        else:
-            ovirt.finish(
-                changed=False,
-                msg=u"VM {} already exists".format(instance_name),
-            )
 
-    if state == 'started':
-        if initial_status == 'up' and (not wait_for_ip or (wait_for_ip and ovirt.get_ips())):
-            ovirt.finish(
-                changed=False,
-                msg=u"VM {} is already running".format(instance_name),
-            )
-        else:
-            ovirt.vm_start()
+        if state == 'cloud-init':
+            ovirt.vm_cloud_init()
             ovirt.finish(
                 changed=True,
                 msg=u"VM {0:s} started".format(instance_name),
             )
 
-    if state == 'cloud-init':
-        ovirt.vm_cloud_init()
-        ovirt.finish(
-            changed=True,
-            msg=u"VM {0:s} started".format(instance_name),
-        )
+        if state == 'shutdown':
+            if initial_status == 'down':
+                ovirt.finish(
+                    changed=False,
+                    msg=u"VM {0:s} is already shutdown".format(instance_name),
+                )
+            else:
+                ovirt.vm_stop()
+                ovirt.finish(
+                    changed=True,
+                    msg=u"VM {} is shutting down".format(instance_name),
+                )
 
-    if state == 'shutdown':
-        if initial_status == 'down':
-            ovirt.finish(
-                changed=False,
-                msg=u"VM {0:s} is already shutdown".format(instance_name),
-            )
-        else:
-            ovirt.vm_stop()
-            ovirt.finish(
-                changed=True,
-                msg=u"VM {} is shutting down".format(instance_name),
-            )
+        if state == 'restart':
+            if initial_status == 'up':
+                ovirt.vm_restart()
+                ovirt.finish(
+                    changed=True,
+                    msg=u"VM {0:s} is restarted".format(instance_name),
+                )
+            else:
+                ovirt.vm_restart()
+                ovirt.finish(
+                    changed=True,
+                    msg=u"VM {0:s} was started".format(instance_name),
+                )
 
-    if state == 'restart':
-        if initial_status == 'up':
-            ovirt.vm_restart()
-            ovirt.finish(
-                changed=True,
-                msg=u"VM {0:s} is restarted".format(instance_name),
-            )
-        else:
-            ovirt.vm_restart()
-            ovirt.finish(
-                changed=True,
-                msg=u"VM {0:s} was started".format(instance_name),
-            )
-
-    if state == 'absent':
-        if initial_status == 'does_not_exist':
-            ovirt.finish(
-                changed=False,
-                msg=u"VM {0:s} does not exist".format(instance_name),
-            )
-        else:
-            ovirt.vm_remove()
-            ovirt.finish(
-                changed=True,
-                msg=u"VM {0:s} removed".format(instance_name),
-            )
+        if state == 'absent':
+            if initial_status == 'does_not_exist':
+                ovirt.finish(
+                    changed=False,
+                    msg=u"VM {0:s} does not exist".format(instance_name),
+                )
+            else:
+                ovirt.vm_remove()
+                ovirt.finish(
+                    changed=True,
+                    msg=u"VM {0:s} removed".format(instance_name),
+                )
 
 # import module snippets
 from ansible.module_utils.basic import *

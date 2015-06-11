@@ -328,8 +328,6 @@ OVIRT_STATE_MAP = dict(
     powering_down='stopping',
 )
 
-TRIES = 0
-
 # ------------------------------------------------------------------- #
 # create connection with API
 #
@@ -342,6 +340,7 @@ class OvirtConnection(object):
     def __init__(self, module):
         self.module = module
         self.conn = self.connect()
+        self.tries = int(module.params['poll_tries'])
 
     def connect(self):
         """
@@ -474,11 +473,10 @@ class OvirtConnection(object):
         :type func: (OvirtConnection) -> bool
         :rtype: bool
         """
-        global TRIES
         poll_frequency = float(self.module.params['poll_frequency'])
 
         time.sleep(poll_frequency)
-        TRIES -= 1
+        self.tries -= 1
         return func()
 
     # noinspection PyUnboundLocalVariable,PyBroadException
@@ -649,14 +647,13 @@ class OvirtConnection(object):
         """
         start instance
         """
-        global TRIES
         instance_name = self.module.params['instance_name']
         async = self.module.boolean(self.module.params['async'])
         wait_for_ip = self.module.boolean(self.module.params['wait_for_ip'])
 
         state = self.vm_status()
 
-        if TRIES <= 0:
+        if self.tries <= 0:
             self.module.fail_json(
                 msg=u"Ran out of poll_tries. {} is currently in state: '{}'".format(instance_name, state)
             )
@@ -682,14 +679,13 @@ class OvirtConnection(object):
         """
         Stop instance
         """
-        global TRIES
         instance_name = self.module.params['instance_name']
         async = self.module.boolean(self.module.params['async'])
 
         vm = self.conn.vms.get(name=instance_name)
         state = self.vm_status()
 
-        if TRIES <= 0:
+        if self.tries <= 0:
             self.module.fail_json(
                 msg=u"Ran out of poll_tries. {} is currently in state: '{}'".format(instance_name, state)
             )
@@ -720,14 +716,13 @@ class OvirtConnection(object):
         remove an instance
     
         """
-        global TRIES
         instance_name = self.module.params['instance_name']
         async = self.module.boolean(self.module.params['async'])
 
         vm = self.conn.vms.get(name=instance_name)
         state = self.vm_status()
 
-        if TRIES <= 0:
+        if self.tries <= 0:
             self.module.fail_json(
                 msg=u"Ran out of poll_tries. {} is currently in state: '{}'".format(instance_name, state)
             )
@@ -906,9 +901,6 @@ def main():
     image = module.params['image']
     resource_type = module.params['resource_type']
     wait_for_ip = module.boolean(module.params['wait_for_ip'])
-
-    global TRIES
-    TRIES = int(module.params['poll_tries'])
 
     ovirt = OvirtConnection(module)
 

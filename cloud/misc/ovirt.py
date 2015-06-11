@@ -302,7 +302,7 @@ instance_data:
             type: string
             sample: up
             choices: ['up', 'down', 'creating', 'starting' 'stopping', 'does_not_exist', 'unknown']
-        zone:
+        cluster:
             description: The ovirt cluster the instance is running on
             returned: success
             type: string
@@ -626,9 +626,19 @@ class OvirtConnection(object):
         if inst is None:
             return {}
 
-        inst.get_custom_properties()
         ips = self.get_ips()
         tags = [x.get_name() for x in inst.get_tags().list()]
+
+        niclist = inst.get_nics().list()
+        ovirt_guest_nics = []
+        for nic in niclist:
+            ovirt_guest_nics.append({
+                'name' : nic.get_name(),
+                'mac' : nic.get_mac().get_address(),
+                'machyphen' : nic.get_mac().get_address().replace(':', '-'),
+                'macupper' : nic.get_mac().get_address().upper(),
+                'machyphenupper' : nic.get_mac().get_address().upper().replace(':', '-'),
+            })
 
         return {
             'uuid': inst.get_id(),
@@ -639,11 +649,16 @@ class OvirtConnection(object):
             'name': inst.get_name(),
             'description': inst.get_description(),
             'status': inst.get_status().get_state(),
-            'zone': self.conn.clusters.get(id=inst.get_cluster().get_id()).get_name(),
+            'cluster': self.conn.clusters.get(id=inst.get_cluster().get_id()).get_name(),
             'tags': tags,
-            # Hosts don't have a public name, so we add an IP
-            'ansible_ssh_host': ips[0] if len(ips) > 0 else None
+            'ansible_ssh_host': ips[0] if len(ips) > 0 else None,
+            'ovirt_guest_memory' : inst.get_memory(),
+            'ovirt_guest_protected' : inst.get_delete_protected(),
+            'ovirt_guest_nics' : ovirt_guest_nics
+
         }
+
+
 
     def vm_cloud_init(self):
         instance_name = self.module.params['instance_name']

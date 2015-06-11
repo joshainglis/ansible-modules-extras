@@ -262,56 +262,96 @@ action: ovirt >
 '''
 RETURN = '''
 instance_data:
-    description: Information about the VM Instance
-    returned: success
-    type: dictionary
-    contains:
-        uuid:
-            description: UUID of the instance
-            returned: success
-            type: string
-            sample: af824696-bdc0-46de-b7f1-44c0302960cd
-        id:
-            description: ID of the instance
-            returned: success
-            type: string
-            sample: af824696-bdc0-46de-b7f1-44c0302960cd
-        image:
-            description: Name of the instance's image
-            returned: success
-            type: string
-            sample: rhel_7x64
-        ips:
-            description: UUID of the instance
-            returned: success
-            type: list
-            sample: ["10.0.0.124"]
+  description: Information about the VM Instance
+  returned: success
+  type: dictionary
+  contains:
+    uuid:
+      description: UUID of the instance
+      returned: success
+      type: string
+      sample: af824696-bdc0-46de-b7f1-44c0302960cd
+    id:
+      description: ID of the instance
+      returned: success
+      type: string
+      sample: af824696-bdc0-46de-b7f1-44c0302960cd
+    image:
+      description: Name of the instance's image
+      returned: success
+      type: string
+      sample: rhel_7x64
+    ips:
+      description: UUID of the instance
+      returned: success
+      type: list
+      sample: ["10.0.0.124"]
+    name:
+      description: Instance name
+      returned: success
+      type: string
+      sample: ansiblevm04
+    description:
+      description: A description of the instance
+      returned: success
+      type: string
+      sample: Some description
+    status:
+      description: UUID of the instance
+      returned: success
+      type: string
+      sample: up
+      choices: ['up', 'down', 'creating', 'starting' 'stopping', 'does_not_exist', 'unknown']
+    cluster:
+      description: The ovirt cluster the instance is running on
+      returned: success
+      type: string
+      sample: local_cluster
+    tags:
+      description: Tags associated with the instance
+      returned: success
+      type: list
+      sample: ["dev", "jenkins"]
+    ovirt_guest_memory:
+      description: Memory assigned to the VM
+      returned: success
+      type: int
+      sample: 2056
+    ovirt_guest_protected:
+      description: Tags associated with the instance
+      returned: success
+      type: boolean
+      sample: True
+    ovirt_guest_nics:
+      description: Tags associated with the instance
+      returned: success
+      type: dictionary
+      contains:
         name:
-            description: Instance name
-            returned: success
-            type: string
-            sample: ansiblevm04
-        description:
-            description: A description of the instance
-            returned: success
-            type: string
-            sample: Some description
-        status:
-            description: UUID of the instance
-            returned: success
-            type: string
-            sample: up
-            choices: ['up', 'down', 'creating', 'starting' 'stopping', 'does_not_exist', 'unknown']
-        cluster:
-            description: The ovirt cluster the instance is running on
-            returned: success
-            type: string
-            sample: local_cluster
-        tags:
-            description: Tags associated with the instance
-            returned: success
-            type: list
-            sample: ["dev", "jenkins"]
+          description: Name of the NIC
+          returned: success
+          type: string
+          sample: eth0
+        mac:
+          description: Mac address of the NIC
+          returned: success
+          type: string
+          sample: 01:23:45:67:89:ab
+        machyphen:
+          description: Hyphenated Mac address of the NIC
+          returned: success
+          type: string
+          sample: 01-23-45-67-89-ab
+        macupper:
+          description: Uppercase Mac address of the NIC
+          returned: success
+          type: string
+          sample: 01:23:45:67:89:AB
+        machyphenupper:
+          description: Uppercase Hyphenated Mac address of the NIC
+          returned: success
+          type: string
+          sample: 01-23-45-67-89-AB
 '''
 
 try:
@@ -633,11 +673,11 @@ class OvirtConnection(object):
         ovirt_guest_nics = []
         for nic in niclist:
             ovirt_guest_nics.append({
-                'name' : nic.get_name(),
-                'mac' : nic.get_mac().get_address(),
-                'machyphen' : nic.get_mac().get_address().replace(':', '-'),
-                'macupper' : nic.get_mac().get_address().upper(),
-                'machyphenupper' : nic.get_mac().get_address().upper().replace(':', '-'),
+                'name': nic.get_name(),
+                'mac': nic.get_mac().get_address(),
+                'machyphen': nic.get_mac().get_address().replace(':', '-'),
+                'macupper': nic.get_mac().get_address().upper(),
+                'machyphenupper': nic.get_mac().get_address().upper().replace(':', '-'),
             })
 
         return {
@@ -652,13 +692,10 @@ class OvirtConnection(object):
             'cluster': self.conn.clusters.get(id=inst.get_cluster().get_id()).get_name(),
             'tags': tags,
             'ansible_ssh_host': ips[0] if len(ips) > 0 else None,
-            'ovirt_guest_memory' : inst.get_memory(),
-            'ovirt_guest_protected' : inst.get_delete_protected(),
-            'ovirt_guest_nics' : ovirt_guest_nics
-
+            'ovirt_guest_memory': inst.get_memory(),
+            'ovirt_guest_protected': inst.get_delete_protected(),
+            'ovirt_guest_nics': ovirt_guest_nics,
         }
-
-
 
     def vm_cloud_init(self):
         instance_name = self.module.params['instance_name']

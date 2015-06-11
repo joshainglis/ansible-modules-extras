@@ -23,7 +23,9 @@ module: ovirt
 author: '"Vincent Van der Kussen (@vincentvdk)" <vincent at vanderkussen.org>'
 short_description: oVirt/RHEV platform management
 description:
-    - allows you to create new instances, either from scratch or an image, in addition to deleting or stopping instances on the oVirt/RHEV platform
+    - >
+      allows you to create new instances, either from scratch or an image, in addition to deleting or stopping instances
+      on the oVirt/RHEV platform
 version_added: "1.4"
 options:
   user:
@@ -179,7 +181,9 @@ options:
     version_added: "2.0"
   wait_for_ip:
     description:
-     - If not async, wait for the VM to provide its IP addresses before continuing (requires that VM image has "ovirt guest agent" installed)
+     - >
+       If not async, wait for the VM to provide its IP addresses before continuing (requires that VM image has "ovirt
+       guest agent" installed)
     default: 'no'
     required: false
     version_added: "2.0"
@@ -328,9 +332,7 @@ OVIRT_STATE_MAP = dict(
     powering_down='stopping',
 )
 
-# ------------------------------------------------------------------- #
-# create connection with API
-#
+
 class OvirtConnection(object):
     """
     :type module: ansible.module_utils.basic.AnsibleModule
@@ -342,6 +344,7 @@ class OvirtConnection(object):
         self.conn = self.connect()
         self.tries = int(module.params['poll_tries'])
 
+    # noinspection PyBroadException
     def connect(self):
         """
         :rtype: ovirtsdk.api.API
@@ -440,6 +443,7 @@ class OvirtConnection(object):
                 )
         return cloud_init
 
+    # noinspection PyBroadException
     def add_tags(self):
         """
         :rtype: list[ovirtsdk.infrastructure.brokers.Tag]
@@ -582,6 +586,7 @@ class OvirtConnection(object):
         for tag in self.add_tags():
             self.conn.vms.get(name=instance_name).tags.add(tag)
 
+    # noinspection PyBroadException
     def instantiate(self):
         instance_name = self.module.params['instance_name']
         image = self.module.params['image']

@@ -142,7 +142,7 @@ options:
      - create, terminate or remove instances
     default: 'present'
     required: false
-    choices: ['present', 'absent', 'shutdown', 'started', 'restarted']
+    choices: ['present', 'absent', 'shutdown', 'started', 'restarted', 'cloud-init']
   authorized_key_file:
     description:
      - absolute path to the public key to be inserted into authorized keys on instantiation
@@ -185,6 +185,18 @@ options:
        If not async, wait for the VM to provide its IP addresses before continuing (requires that VM image has "ovirt
        guest agent" installed)
     default: 'no'
+    required: false
+    version_added: "2.0"
+  custom_script:
+    description:
+      - A custom script to use with cloud-init. Must be an absolute path to a file
+    default: null
+    required: false
+    version_added: "2.0"
+  instance_host_name:
+    description:
+      - a hostname to apply to the instance
+    default: null
     required: false
     version_added: "2.0"
 
@@ -343,6 +355,7 @@ class OvirtConnection(object):
         self.module = module
         self.conn = self.connect()
         self.tries = int(module.params['poll_tries'])
+        self.cloud_init_run = False
 
     # noinspection PyBroadException
     def connect(self):
@@ -364,52 +377,60 @@ class OvirtConnection(object):
         else:
             return api
 
-    @staticmethod
-    def _generate_cloud_init(key, user='root', custom_script=None, host=None, ):
+    def _get_auth_key(self):
+        authorized_key_file = self.module.params['authorized_key_file']
+
+        if authorized_key_file is not None:
+            if os.path.isfile(authorized_key_file):
+                try:
+                    with open(authorized_key_file, 'r') as f:
+                        return f.read()
+                except IOError:
+                    self.module.fail_json(
+                        msg=u"Could not read the given authorized_key_file at {}".format(authorized_key_file)
+                    )
+            else:
+                self.module.fail_json(
+                    msg=u"authorized_key_file must be an absolute path to a public key file"
+                )
+
+    def _get_custom_script(self):
+        script_file = self.module.params['script_file']
+
+        if script_file is not None:
+            if os.path.isfile(script_file):
+                try:
+                    with open(script_file, 'r') as f:
+                        return f.read()
+                except IOError:
+                    self.module.fail_json(
+                        msg=u"Could not read the given custom script file at {}".format(script_file)
+                    )
+            else:
+                self.module.fail_json(
+                    msg=u"custom_script must be an absolute path to a file"
+                )
+
+    def _generate_cloud_init(self):
         """
-        :type key: str
-        :type user: str
-        :type custom_script: str
-        :type host: str
         :rtype : ovirtsdk.xml.params.Initialization
         """
 
-        script = ''
-        if custom_script is not None:
-            if os.path.isfile(custom_script):
-                with open(custom_script, 'r') as f:
-                    script = f.read()
-            else:
-                script = custom_script
+        authorized_key_user = self.module.params['authorized_key_user']
+        instance_host_name = self.module.params['instance_host_name']
+
+        script = self._get_custom_script()
+        key = self._get_auth_key()
 
         cloud_init = params.CloudInit(
-            host=host,
+            host=instance_host_name,
             files=params.Files(
                 file=[params.File(name="/tmp/_vmcustomscript", content=script, type_="PLAINTEXT")]
             ),
             authorized_keys=params.AuthorizedKeys(
                 authorized_key=[
                     params.AuthorizedKey(
-                        user=params.User(user_name=user),
-                        key=key
-                    ),
-                ]
-            )
-        )
-        return params.Initialization(cloud_init=cloud_init)
-
-    @staticmethod
-    def add_auth_key(key, user='root'):
-        """
-        :type key: str
-        :type user: str
-        :rtype : ovirtsdk.xml.params.Initialization
-        """
-        cloud_init = params.CloudInit(
-            authorized_keys=params.AuthorizedKeys(
-                authorized_key=[
-                    params.AuthorizedKey(
-                        user=params.User(user_name=user),
+                        user=params.User(user_name=authorized_key_user),
                         key=key
                     ),
                 ]
@@ -421,27 +442,7 @@ class OvirtConnection(object):
         """
         :rtype: ovirtsdk.xml.params.Initialization
         """
-        authorized_key_file = self.module.params['authorized_key_file']
-        authorized_key_user = self.module.params['authorized_key_user']
-
-        cloud_init = None
-        if authorized_key_file:
-            if os.path.isfile(authorized_key_file):
-                try:
-                    with open(authorized_key_file, 'r') as f:
-                        key = f.read()
-                except IOError:
-                    self.module.fail_json(
-                        msg=u"Could not read the given authorized_key_file at {}".format(authorized_key_file)
-                    )
-                else:
-                    cloud_init = self.add_auth_key(key, authorized_key_user)
-            else:
-                self.module.fail_json(
-                    msg=(u"The provided authorized_key_file is not a file. "
-                         u"Please specify the absolute path to the .pub key file")
-                )
-        return cloud_init
+        return self._generate_cloud_init()
 
     # noinspection PyBroadException
     def add_tags(self):
@@ -488,7 +489,6 @@ class OvirtConnection(object):
         """
         Create a VM instance
         """
-
         instance_name = self.module.params['instance_name']
         zone = self.module.params['zone']
         instance_disksize = self.module.params['instance_disksize']
@@ -511,7 +511,6 @@ class OvirtConnection(object):
                 memory=1024 * 1024 * int(instance_mem),
                 cpu=params.CPU(topology=params.CpuTopology(cores=int(instance_cores))),
                 type_=instance_type,
-                initialization=self.get_cloud_init(),
             )
             vmdisk = params.Disk(
                 size=1024 * 1024 * 1024 * int(instance_disksize),
@@ -533,7 +532,6 @@ class OvirtConnection(object):
                 memory=1024 * 1024 * int(instance_mem),
                 cpu=params.CPU(topology=params.CpuTopology(cores=int(instance_cores))),
                 type_=instance_type,
-                initialization=self.get_cloud_init(),
             )
             vmdisk = params.Disk(
                 size=1024 * 1024 * 1024 * int(instance_disksize),
@@ -580,7 +578,6 @@ class OvirtConnection(object):
             cluster=self.conn.clusters.get(name=zone),
             template=self.conn.templates.get(name=image),
             disks=params.Disks(clone=True),
-            initialization=self.get_cloud_init(),
         )
         self.conn.vms.add(vmparams)
         for tag in self.add_tags():
@@ -647,6 +644,41 @@ class OvirtConnection(object):
             # Hosts don't have a public name, so we add an IP
             'ansible_ssh_host': ips[0] if len(ips) > 0 else None
         }
+
+    def vm_cloud_init(self):
+        instance_name = self.module.params['instance_name']
+        async = self.module.boolean(self.module.params['async'])
+        wait_for_ip = self.module.boolean(self.module.params['wait_for_ip'])
+
+        state = self.vm_status()
+
+        if self.tries <= 0:
+            self.module.fail_json(
+                msg=u"Ran out of poll_tries. {} is currently in state: '{}'".format(instance_name, state)
+            )
+        if state == 'does_not_exist':
+            self.instantiate()
+            return self.recurse(self.vm_cloud_init)
+        elif state == 'unknown':
+            self.module.fail_json(msg=u"{} is in an unknown state.".format(instance_name))
+        elif state in ['creating', 'starting', 'stopping']:
+            return self.recurse(self.vm_cloud_init)
+        elif state == 'down':
+            vm = self.conn.vms.get(name=instance_name)
+            vm.start(action=params.Action(params.VM(initialization=self.get_cloud_init())))
+            self.cloud_init_run = True
+            if not async:
+                return self.recurse(self.vm_cloud_init)
+        elif state == 'up':
+            if not self.cloud_init_run:
+                self.vm_stop()
+                self.recurse(self.vm_cloud_init)
+            else:
+                self.cloud_init_run = False
+                if wait_for_ip:
+                    ips = self.get_ips()
+                    if not ips:
+                        return self.recurse(self.vm_cloud_init)
 
     def vm_start(self):
         """
@@ -784,7 +816,7 @@ def main():
             state=dict(
                 type='str',
                 default='present',
-                choices=['present', 'absent', 'shutdown', 'started', 'restart']
+                choices=['present', 'absent', 'shutdown', 'started', 'restart', 'cloud-init']
             ),
             user=dict(
                 type='str',
@@ -895,6 +927,14 @@ def main():
                 default=False,
                 choices=BOOLEANS
             ),
+            custom_script=dict(
+                type='str',
+                default=None,
+            ),
+            instance_host_name=dict(
+                type='str',
+                default=None,
+            ),
         ),
     )
 
@@ -942,6 +982,13 @@ def main():
                 changed=True,
                 msg=u"VM {0:s} started".format(instance_name),
             )
+
+    if state == 'cloud-init':
+        ovirt.vm_cloud_init()
+        ovirt.finish(
+            changed=True,
+            msg=u"VM {0:s} started".format(instance_name),
+        )
 
     if state == 'shutdown':
         if initial_status == 'down':

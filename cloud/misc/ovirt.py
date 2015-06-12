@@ -457,16 +457,16 @@ class OvirtConnection(object):
         """
         :rtype : str
         """
-        script_file = self.module.params['script_file']
+        custom_script = self.module.params['custom_script']
 
-        if script_file is not None:
-            if os.path.isfile(script_file):
+        if custom_script is not None:
+            if os.path.isfile(custom_script):
                 try:
-                    with open(script_file, 'r') as f:
+                    with open(custom_script, 'r') as f:
                         return f.read()
                 except IOError:
                     self.module.fail_json(
-                        msg=u"Could not read the given custom script file at {}".format(script_file)
+                        msg=u"Could not read the given custom script file at {}".format(custom_script)
                     )
             else:
                 self.module.fail_json(

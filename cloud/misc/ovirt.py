@@ -61,11 +61,12 @@ options:
     default: null
     required: false
     choices: [ 'new', 'template' ]
-  zone:
+  cluster:
     description:
      - deploy the image to this oVirt cluster
     default: null
     required: false
+    aliases: [ zone ]
   instance_disksize:
     description:
      - size of the instance's disk in GB
@@ -142,7 +143,7 @@ options:
      - create, terminate or remove instances
     default: 'present'
     required: false
-    choices: ['present', 'absent', 'shutdown', 'started', 'restarted', 'cloud-init']
+    choices: ['present', 'absent', 'shutdown', 'started', 'restart', 'cloud-init']
   authorized_key_file:
     description:
      - absolute path to the public key to be inserted into authorized keys on instantiation
@@ -153,6 +154,12 @@ options:
     description:
      - insert user key into authorized keys on instantiation
     default: 'root'
+    required: false
+    version_added: "2.0"
+  authorized_key_user_groups:
+    description:
+     - Groups to associate to the user. comma separated list
+    default: null
     required: false
     version_added: "2.0"
   tag:
@@ -199,6 +206,30 @@ options:
     default: null
     required: false
     version_added: "2.0"
+  nic_name:
+    description:
+      - Name of the nic to apply a static ip address to
+    default: null
+    required: false
+    version_added: "2.0"
+  static_ip_address:
+    description:
+      - a static IP address to assign to the instance
+    default: null
+    required: false
+    version_added: "2.0"
+  static_netmask:
+    description:
+      - a static netmask address to assign to the instance
+    default: null
+    required: false
+    version_added: "2.0"
+  static_gateway:
+    description:
+      - a static gateway IP address to assign to the instance
+    default: null
+    required: false
+    version_added: "2.0"
 
 requirements:
   - "python >= 2.6"
@@ -208,33 +239,33 @@ EXAMPLES = '''
 # Basic example provisioning from image.
 
 action: ovirt >
-    user=admin@internal 
-    url=https://ovirt.example.com 
-    instance_name=ansiblevm04 
-    password=secret 
-    image=centos_64 
-    zone=cluster01 
+    user=admin@internal
+    url=https://ovirt.example.com
+    instance_name=ansiblevm04
+    password=secret
+    image=centos_64
+    cluster=cluster01
     resource_type=template"
 
 # Full example to create new instance from scratch
-action: ovirt > 
-    instance_name=testansible 
-    resource_type=new 
-    instance_type=server 
-    user=admin@internal 
-    password=secret 
-    url=https://ovirt.example.com 
-    instance_disksize=10 
-    zone=cluster01 
-    region=datacenter1 
-    instance_cpus=1 
-    instance_nic=nic1 
-    instance_network=rhevm 
-    instance_mem=1000 
-    disk_alloc=thin 
-    sdomain=FIBER01 
-    instance_cores=1 
-    instance_os=rhel_6x64 
+action: ovirt >
+    instance_name=testansible
+    resource_type=new
+    instance_type=server
+    user=admin@internal
+    password=secret
+    url=https://ovirt.example.com
+    instance_disksize=10
+    cluster=cluster01
+    region=datacenter1
+    instance_cpus=1
+    instance_nic=nic1
+    instance_network=rhevm
+    instance_mem=1000
+    disk_alloc=thin
+    sdomain=FIBER01
+    instance_cores=1
+    instance_os=rhel_6x64
     disk_int=virtio
     authorized_key_file=/home/user/.ssh/id_rsa.pub
     authorized_key_user=root
@@ -254,10 +285,10 @@ action: ovirt >
 
 # starting an instance
 action: ovirt >
-    instance_name=testansible 
-    state=started 
-    user=admin@internal 
-    password=secret 
+    instance_name=testansible
+    state=started
+    user=admin@internal
+    password=secret
     url=https://ovirt.example.com
 '''
 RETURN = '''
@@ -390,14 +421,16 @@ class OvirtConnection(object):
     :type module: ansible.module_utils.basic.AnsibleModule
     :type conn: ovirtsdk.api.API
     :type tries: int
-    :type cloud_init_run: bool
+    :type cloud_init_started: bool
+    :type cloud_init_completed: bool
     """
 
     def __init__(self, module):
         self.module = module
         self.conn = None
         self.tries = int(module.params['poll_tries'])
-        self.cloud_init_run = False
+        self.cloud_init_started = False
+        self.cloud_init_completed = False
 
     def __enter__(self):
         """
@@ -426,7 +459,7 @@ class OvirtConnection(object):
             url = '{}/api'.format(url.strip().rstrip('/'))
 
         try:
-            api = API(url=url, username=user, password=password, insecure=True)
+            api = API(url=url, username=user, password=password, insecure=True, debug=False)
             api.test(throw_exception=True)
         except:
             self.module.fail_json(msg=u"Could not connect to server: {}".format(url))
@@ -469,9 +502,53 @@ class OvirtConnection(object):
                         msg=u"Could not read the given custom script file at {}".format(custom_script)
                     )
             else:
-                self.module.fail_json(
-                    msg=u"custom_script must be an absolute path to a file"
-                )
+                return custom_script
+
+    def _cloud_init_network(self):
+        """
+        :rtype: ovirtsdk.xml.params.NetworkConfiguration
+        """
+        nic_name = self.module.params['nic_name']
+        static_ip_address = self.module.params['static_ip_address']
+        static_netmask = self.module.params['static_netmask']
+        static_gateway = self.module.params['static_gateway']
+
+        if all([nic_name, static_ip_address, static_netmask, static_gateway]):
+            return params.NetworkConfiguration(
+                nics=params.Nics(nic=[
+                    params.NIC(
+                        name=nic_name,
+                        boot_protocol="STATIC",
+                        on_boot=True,
+                        network=params.Network(
+                            ip=params.IP(
+                                address=static_ip_address,
+                                netmask=static_netmask,
+                                gateway=static_gateway
+                            )
+                        )
+                    )
+                ])
+            )
+
+    def _cloud_init_user_groups(self):
+        user_groups = self.module.params['authorized_key_user_groups']
+        if user_groups is not None:
+            return params.Groups(
+                group=[params.Group(name=group.strip()) for group in user_groups.lower().strip().split(',')]
+            )
+
+    def _cloud_init_user(self):
+        authorized_key_user = self.module.params['authorized_key_user']
+        if authorized_key_user is not None:
+            return params.Users(
+                user=[
+                    params.User(
+                        user_name=authorized_key_user,
+                        groups=self._cloud_init_user_groups()
+                    )
+                ]
+            )
 
     def _generate_cloud_init(self):
         """
@@ -483,13 +560,18 @@ class OvirtConnection(object):
 
         script = self._get_custom_script()
         key = self._get_auth_key()
+        network = self._cloud_init_network()
 
-        cloud_init = params.CloudInit(
-            host=instance_host_name,
-            files=params.Files(
+        files = None
+        auth_key = None
+
+        if script is not None:
+            files = params.Files(
                 file=[params.File(name="/tmp/_vmcustomscript", content=script, type_="PLAINTEXT")]
-            ),
-            authorized_keys=params.AuthorizedKeys(
+            )
+
+        if key is not None:
+            auth_key = params.AuthorizedKeys(
                 authorized_key=[
                     params.AuthorizedKey(
                         user=params.User(user_name=authorized_key_user),
@@ -497,6 +579,14 @@ class OvirtConnection(object):
                     ),
                 ]
             )
+
+        cloud_init = params.CloudInit(
+            host=instance_host_name,
+            files=files,
+            authorized_keys=auth_key,
+            network_configuration=network,
+            regenerate_ssh_keys=True,
+            users=self._cloud_init_user()
         )
         return params.Initialization(cloud_init=cloud_init)
 
@@ -552,7 +642,7 @@ class OvirtConnection(object):
         Create a VM instance
         """
         instance_name = self.module.params['instance_name']
-        zone = self.module.params['zone']
+        cluster = self.module.params['cluster']
         instance_disksize = self.module.params['instance_disksize']
         instance_nic = self.module.params['instance_nic']
         instance_network = self.module.params['instance_network']
@@ -567,7 +657,7 @@ class OvirtConnection(object):
         if disk_alloc == 'thin':
             vmparams = params.VM(
                 name=instance_name,
-                cluster=self.conn.clusters.get(name=zone),
+                cluster=self.conn.clusters.get(name=cluster),
                 os=params.OperatingSystem(type_=instance_os),
                 template=self.conn.templates.get(name="Blank"),
                 memory=1024 * 1024 * int(instance_mem),
@@ -588,7 +678,7 @@ class OvirtConnection(object):
         elif disk_alloc == 'preallocated':
             vmparams = params.VM(
                 name=instance_name,
-                cluster=self.conn.clusters.get(name=zone),
+                cluster=self.conn.clusters.get(name=cluster),
                 os=params.OperatingSystem(type_=instance_os),
                 template=self.conn.templates.get(name="Blank"),
                 memory=1024 * 1024 * int(instance_mem),
@@ -632,12 +722,12 @@ class OvirtConnection(object):
         Create an instance from a template
         """
         instance_name = self.module.params['instance_name']
-        zone = self.module.params['zone']
+        cluster = self.module.params['cluster']
         image = self.module.params['image']
 
         vmparams = params.VM(
             name=instance_name,
-            cluster=self.conn.clusters.get(name=zone),
+            cluster=self.conn.clusters.get(name=cluster),
             template=self.conn.templates.get(name=image),
             disks=params.Disks(clone=True),
         )
@@ -741,16 +831,21 @@ class OvirtConnection(object):
             return self.recurse(self.vm_cloud_init)
         elif state == 'down':
             vm = self.conn.vms.get(name=instance_name)
-            vm.start(action=params.Action(params.VM(initialization=self.get_cloud_init())))
-            self.cloud_init_run = True
+            if not self.cloud_init_started:
+                vm.start(action=params.Action(vm=params.VM(initialization=self.get_cloud_init())))
+                self.cloud_init_started = True
+            else:
+                vm.start()
+                self.cloud_init_completed = True
             if not async:
                 return self.recurse(self.vm_cloud_init)
         elif state == 'up':
-            if not self.cloud_init_run:
+            if not self.cloud_init_started:
                 self.vm_stop()
                 self.recurse(self.vm_cloud_init)
+            elif not self.cloud_init_completed:
+                self.recurse(self.vm_cloud_init)
             else:
-                self.cloud_init_run = False
                 if wait_for_ip:
                     ips = self.get_ips()
                     if not ips:
@@ -924,8 +1019,9 @@ def main():
                 type='str',
                 choices=['new', 'template']
             ),
-            zone=dict(
+            cluster=dict(
                 type='str',
+                aliases=['zone']
             ),
             instance_disksize=dict(
                 type='str',
@@ -1015,6 +1111,22 @@ def main():
             instance_host_name=dict(
                 type='str',
                 default=None,
+            ),
+            nic_name=dict(
+                type='str',
+                default=None
+            ),
+            static_ip_address=dict(
+                type='str',
+                default=None
+            ),
+            static_netmask=dict(
+                type='str',
+                default=None
+            ),
+            static_gateway=dict(
+                type='str',
+                default=None
             ),
         ),
     )

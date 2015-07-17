@@ -168,30 +168,21 @@ options:
     default: null
     required: false
     version_added: "2.0"
-  async:
+  wait_for_state:
     description:
-     - If True, just send command to server. If false, wait for the correct state before continuing (Idempotent)
-    default: 'yes'
+     - Normally all actions are asyncronous. This defines that we should wait for a machine state to be reached before we progress.
     required: false
     version_added: "2.0"
   poll_frequency:
     description:
-     - If not async, this sets the poll_frequency (in seconds) at which to poll for the state of the VM
+     - If we have set wait_for_state, this sets the poll_frequency (in seconds) at which to poll for the state of the VM
     default: 5
     required: false
     version_added: "2.0"
-  poll_tries:
+  poll_timeout:
     description:
-     - If not async, this specifies the maximum number of times to poll before exiting
-    default: 100
-    required: false
-    version_added: "2.0"
-  wait_for_ip:
-    description:
-     - >
-       If not async, wait for the VM to provide its IP addresses before continuing (requires that VM image has "ovirt
-       guest agent" installed)
-    default: 'no'
+     - If we have set wait_for_state, this specifies the maximum number of seconds to wait for before returning with a failure condition.
+    default: 180
     required: false
     version_added: "2.0"
   custom_script:
@@ -272,8 +263,7 @@ action: ovirt >
     tags=test,ansible,jenkins
     async=False
     poll_frequency=5
-    poll_tries=100
-    wait_for_ip=True
+    poll_timeout=180
 
 # stopping an instance
 action: ovirt >
@@ -385,6 +375,7 @@ instance_data:
           sample: 01-23-45-67-89-AB
 '''
 
+import time
 try:
     # noinspection PyUnresolvedReferences
     from ovirtsdk.api import API
@@ -395,25 +386,35 @@ try:
 except ImportError:
     HAS_LIB = False
 
-OVIRT_STATE_MAP = dict(
-    unassigned='unknown',
-    down='down',
-    up='up',
-    powering_up='starting',
-    paused='down',
-    migrating_from='creating',
-    migrating_to='creating',
-    unknown='unknown',
-    not_responding='unknown',
-    wait_for_launch='starting',
-    reboot_in_progress='starting',
-    saving_state='stopping',
-    restoring_state='starting',
-    suspended='down',
-    image_illegal='unknown',
-    image_locked='creating',
-    powering_down='stopping',
-)
+#OVIRT_STATE_MAP = dict(
+#    unassigned='unknown',
+#    down='down',
+#    up='up',
+#    powering_up='starting',
+#    paused='down',
+#    migrating_from='creating',
+#    migrating_to='creating',
+#    unknown='unknown',
+#    not_responding='unknown',
+#    wait_for_launch='starting',
+#    reboot_in_progress='starting',
+#    saving_state='stopping',
+#    restoring_state='starting',
+#    suspended='down',
+#    image_illegal='unknown',
+#    image_locked='creating',
+#    powering_down='stopping',
+#)
+
+OVIRT_VALID_STATES = [
+    'up',
+    'down',
+    'starting',
+    'unknown',
+    'stopping',
+    'creating',
+]
+
 
 
 class OvirtConnection(object):
@@ -428,7 +429,7 @@ class OvirtConnection(object):
     def __init__(self, module):
         self.module = module
         self.conn = None
-        self.tries = int(module.params['poll_tries'])
+        self.tries = int(module.params['poll_timeout'])
         self.cloud_init_started = False
         self.cloud_init_completed = False
 
@@ -625,17 +626,6 @@ class OvirtConnection(object):
                         self.module.fail_json(msg=u"Failed to get tag '{}' from ovirt".format(tag))
                 return tags_to_add
 
-    def recurse(self, func):
-        """
-        :type func: (OvirtConnection) -> bool
-        :rtype: bool
-        """
-        poll_frequency = float(self.module.params['poll_frequency'])
-
-        time.sleep(poll_frequency)
-        self.tries -= 1
-        return func()
-
     # noinspection PyUnboundLocalVariable,PyBroadException
     def create_vm(self):
         """
@@ -654,16 +644,19 @@ class OvirtConnection(object):
         instance_cores = self.module.params['instance_cores']
         sdomain = self.module.params['sdomain']
 
+        vmparams = params.VM(
+            name=instance_name,
+            cluster=self.conn.clusters.get(name=cluster),
+            os=params.OperatingSystem(type_=instance_os),
+            template=self.conn.templates.get(name="Blank"),
+            memory=1024 * 1024 * int(instance_mem),
+            cpu=params.CPU(topology=params.CpuTopology(cores=int(instance_cores))),
+            type_=instance_type,
+        )
+        network_net = params.Network(name=instance_network)
+        nic_net1 = params.NIC(name='nic1', network=network_net, interface='virtio')
+
         if disk_alloc == 'thin':
-            vmparams = params.VM(
-                name=instance_name,
-                cluster=self.conn.clusters.get(name=cluster),
-                os=params.OperatingSystem(type_=instance_os),
-                template=self.conn.templates.get(name="Blank"),
-                memory=1024 * 1024 * int(instance_mem),
-                cpu=params.CPU(topology=params.CpuTopology(cores=int(instance_cores))),
-                type_=instance_type,
-            )
             vmdisk = params.Disk(
                 size=1024 * 1024 * 1024 * int(instance_disksize),
                 wipe_after_delete=True,
@@ -673,18 +666,7 @@ class OvirtConnection(object):
                 format='cow',
                 storage_domains=params.StorageDomains(storage_domain=[self.conn.storagedomains.get(name=sdomain)]),
             )
-            network_net = params.Network(name=instance_network)
-            nic_net1 = params.NIC(name='nic1', network=network_net, interface='virtio')
         elif disk_alloc == 'preallocated':
-            vmparams = params.VM(
-                name=instance_name,
-                cluster=self.conn.clusters.get(name=cluster),
-                os=params.OperatingSystem(type_=instance_os),
-                template=self.conn.templates.get(name="Blank"),
-                memory=1024 * 1024 * int(instance_mem),
-                cpu=params.CPU(topology=params.CpuTopology(cores=int(instance_cores))),
-                type_=instance_type,
-            )
             vmdisk = params.Disk(
                 size=1024 * 1024 * 1024 * int(instance_disksize),
                 wipe_after_delete=True,
@@ -694,8 +676,6 @@ class OvirtConnection(object):
                 format='raw',
                 storage_domains=params.StorageDomains(storage_domain=[self.conn.storagedomains.get(name=sdomain)])
             )
-            network_net = params.Network(name=instance_network)
-            nic_net1 = params.NIC(name=instance_nic, network=network_net, interface='virtio')
         else:
             self.module.fail_json(msg=u"Invalid value for 'disk_alloc': {}".format(disk_alloc))
 
@@ -714,8 +694,9 @@ class OvirtConnection(object):
         except:
             self.vm_remove()
             self.module.fail_json(msg=u"Error adding nic")
-        for tag in self.add_tags():
-            self.conn.vms.get(name=instance_name).tags.add(tag)
+        if self.add_tags() is not None:
+            for tag in self.add_tags():
+                self.conn.vms.get(name=instance_name).tags.add(tag)
 
     def create_vm_template(self):
         """
@@ -733,8 +714,9 @@ class OvirtConnection(object):
         )
         try:
             self.conn.vms.add(vmparams)
-            for tag in self.add_tags():
-                self.conn.vms.get(name=instance_name).tags.add(tag)
+            if self.add_tags() is not None:
+                for tag in self.add_tags():
+                    self.conn.vms.get(name=instance_name).tags.add(tag)
         except:
             raise self.module.fail_json(msg=u'error adding template {}'.format(image))
 
@@ -745,10 +727,10 @@ class OvirtConnection(object):
         resource_type = self.module.params['resource_type']
 
         if resource_type == 'template':
-            try:
-                self.create_vm_template()
-            except:
-                self.module.fail_json(msg=u'error adding template {}'.format(image))
+            #try:
+            self.create_vm_template()
+            #except Exception as e:
+            #    self.module.fail_json(msg=u'error deploying from template {} - {}'.format(image, e))
         elif resource_type == 'new':
             try:
                 self.create_vm()
@@ -816,23 +798,9 @@ class OvirtConnection(object):
         :rtype : bool
         """
         instance_name = self.module.params['instance_name']
-        async = self.module.boolean(self.module.params['async'])
-        wait_for_ip = self.module.boolean(self.module.params['wait_for_ip'])
 
-        state = self.vm_status()
-
-        if self.tries <= 0:
-            self.module.fail_json(
-                msg=u"Ran out of poll_tries. {} is currently in state: '{}'".format(instance_name, state)
-            )
-        if state == 'does_not_exist':
-            self.instantiate()
-            return self.recurse(self.vm_cloud_init)
-        elif state == 'unknown':
-            self.module.fail_json(msg=u"{} is in an unknown state.".format(instance_name))
-        elif state in ['creating', 'starting', 'stopping']:
-            return self.recurse(self.vm_cloud_init)
-        elif state == 'down':
+        current_state = self.vm_status()
+        if current_state == 'down':
             vm = self.conn.vms.get(name=instance_name)
             if not self.cloud_init_started:
                 vm.start(action=params.Action(vm=params.VM(initialization=self.get_cloud_init())))
@@ -840,19 +808,11 @@ class OvirtConnection(object):
             else:
                 vm.start()
                 self.cloud_init_completed = True
-            if not async:
-                return self.recurse(self.vm_cloud_init)
-        elif state == 'up':
-            if not self.cloud_init_started:
-                self.vm_stop()
-                self.recurse(self.vm_cloud_init)
-            elif not self.cloud_init_completed:
-                self.recurse(self.vm_cloud_init)
-            else:
-                if wait_for_ip:
-                    ips = self.get_ips()
-                    if not ips:
-                        return self.recurse(self.vm_cloud_init)
+            return True
+        else:
+            self.module.fail_json(
+                msg=u"Machine {} is in state '{}'. Will not cloud init as you should investigate this".format(current_state ,instance_name)
+            )
 
     def vm_start(self):
         """
@@ -860,32 +820,20 @@ class OvirtConnection(object):
         :rtype : bool
         """
         instance_name = self.module.params['instance_name']
-        async = self.module.boolean(self.module.params['async'])
-        wait_for_ip = self.module.boolean(self.module.params['wait_for_ip'])
 
-        state = self.vm_status()
+        current_state = self.vm_status()
 
-        if self.tries <= 0:
-            self.module.fail_json(
-                msg=u"Ran out of poll_tries. {} is currently in state: '{}'".format(instance_name, state)
-            )
-        if state == 'does_not_exist':
-            self.instantiate()
-            return self.recurse(self.vm_start)
-        elif state == 'unknown':
-            self.module.fail_json(msg=u"{} is in an unknown state.".format(instance_name))
-        elif state in ['creating', 'starting', 'stopping']:
-            return self.recurse(self.vm_start)
-        elif state == 'down':
+        if current_state == 'down':
             vm = self.conn.vms.get(name=instance_name)
             vm.start()
-            if not async:
-                return self.recurse(self.vm_start)
-        elif state == 'up':
-            if wait_for_ip:
-                ips = self.get_ips()
-                if not ips:
-                    return self.recurse(self.vm_start)
+            return True
+        elif current_state == 'up':
+            return False
+        else:
+            self.module.fail_json(
+                msg=u"Machine {} is in state '{}'. Will not start as you should investigate this".format(current_state ,instance_name)
+            )
+
 
     def vm_stop(self):
         """
@@ -893,28 +841,19 @@ class OvirtConnection(object):
         :rtype : bool
         """
         instance_name = self.module.params['instance_name']
-        async = self.module.boolean(self.module.params['async'])
 
         vm = self.conn.vms.get(name=instance_name)
-        state = self.vm_status()
+        current_state = self.vm_status()
 
-        if self.tries <= 0:
-            self.module.fail_json(
-                msg=u"Ran out of poll_tries. {} is currently in state: '{}'".format(instance_name, state)
-            )
-        if state == 'does_not_exist':
-            self.instantiate()
-            return self.recurse(self.vm_stop)
-        elif state == 'unknown':
-            self.module.fail_json(msg=u"{} is in an unknown state.".format(instance_name))
-        elif state in ['creating', 'starting', 'stopping']:
-            return self.recurse(self.vm_stop)
-        elif state == 'up':
+        if current_state == 'up':
             vm.stop()
-            if not async:
-                return self.recurse(self.vm_stop)
-        elif state == 'down':
             return True
+        elif current_state == 'down':
+            return False
+        else:
+            self.module.fail_json(
+                msg=u"Machine {} is in state '{}'. Will not stop as you should investigate this".format(current_state ,instance_name)
+            )
 
     def vm_restart(self):
         """
@@ -931,28 +870,19 @@ class OvirtConnection(object):
         :rtype : bool
         """
         instance_name = self.module.params['instance_name']
-        async = self.module.boolean(self.module.params['async'])
 
         vm = self.conn.vms.get(name=instance_name)
-        state = self.vm_status()
+        current_state = self.vm_status()
 
-        if self.tries <= 0:
-            self.module.fail_json(
-                msg=u"Ran out of poll_tries. {} is currently in state: '{}'".format(instance_name, state)
-            )
-        if state == 'does_not_exist':
+        if current_state == 'does_not_exist':
             return True
-        elif state == 'unknown':
-            vm.delete(action=params.Action(force=True))
-            return True if async else self.recurse(self.vm_remove)
-        elif state in ['creating', 'starting', 'stopping']:
-            return self.recurse(self.vm_remove)
-        elif state == 'up':
-            self.vm_stop()
-            return self.recurse(self.vm_remove)
-        elif state == 'down':
+        elif current_state == 'down':
             vm.delete()
-            return True if async else self.recurse(self.vm_remove)
+            return True
+        else:
+            self.module.fail_json(
+                msg=u"Machine {} is in state '{}'. Will not remove as you should investigate this".format(current_state ,instance_name)
+            )
 
     def vm_status(self):
         """
@@ -964,7 +894,8 @@ class OvirtConnection(object):
         if instance_name not in set([vm.get_name() for vm in self.conn.vms.list()]):
             status = 'does_not_exist'
         else:
-            status = OVIRT_STATE_MAP.get(self.conn.vms.get(name=instance_name).get_status().get_state(), 'unknown')
+            #status = OVIRT_STATE_MAP.get(self.conn.vms.get(name=instance_name).get_status().get_state(), 'unknown')
+            status = self.conn.vms.get(name=instance_name).get_status().get_state()
         return status
 
     def get_vm(self):
@@ -982,11 +913,29 @@ class OvirtConnection(object):
         :type changed: bool
         :type msg: str
         """
+        # Close the connection?
         self.module.exit_json(
             changed=changed,
             msg=msg,
             instance_data=self.get_instance_data()
         )
+
+    def wait_for_state(self, state):
+        """
+        :type state: str
+        """
+        freq = self.module.params['poll_frequency']
+        timeout = self.module.params['poll_timeout']
+        elapsed = 0
+        while elapsed < timeout:
+            #Check the machine state
+            current_state = self.vm_status()
+            print('%s %s' % (current_state, elapsed))
+            if state == current_state:
+                return
+            elapsed += freq
+            time.sleep(freq)
+        self.module.fail_json(msg=u'Waited for %s and state %s was not reached. Machine is in state %s' % (timeout, state, current_state ))
 
 
 def main():
@@ -1089,23 +1038,17 @@ def main():
             tags=dict(
                 type='str',
             ),
-            async=dict(
-                type='bool',
-                default=True,
-                choices=BOOLEANS
+            wait_for_state=dict(
+                type='str',
+                default=None
             ),
             poll_frequency=dict(
                 type='float',
                 default=5.0
             ),
-            poll_tries=dict(
+            poll_timeout=dict(
                 type='int',
-                default=100
-            ),
-            wait_for_ip=dict(
-                type='bool',
-                default=False,
-                choices=BOOLEANS
+                default=180
             ),
             custom_script=dict(
                 type='str',
@@ -1141,89 +1084,72 @@ def main():
     instance_name = module.params['instance_name']
     image = module.params['image']
     resource_type = module.params['resource_type']
-    wait_for_ip = module.boolean(module.params['wait_for_ip'])
+    wait_for_state = module.params['wait_for_state']
+    # Check that the wait_for_state is a valid state
+    if wait_for_state is not None and wait_for_state not in OVIRT_VALID_STATES:
+        module.fail_json(msg=u'Requested wait_for_state with invalid state.')
 
+    # Going to need to tottaly rewrite these ....
     with OvirtConnection(module) as ovirt:
         initial_status = ovirt.vm_status()
+        changed = False
+        error = False
+        msg = u'No action was taken'
 
         if state == 'present':
             if initial_status == "does_not_exist":
                 ovirt.instantiate()
                 if resource_type == 'template':
-                    ovirt.finish(
-                        changed=True,
-                        msg=u"deployed VM {} from template {}".format(instance_name, image),
-                    )
+                    changed=True
+                    msg=u"deployed VM {} from template {}".format(instance_name, image)
                 elif resource_type == 'new':
-                    ovirt.finish(
-                        changed=True,
-                        msg=u"deployed VM {} from scratch".format(instance_name),
-                    )
+                    changed=True
+                    msg=u"deployed VM {} from scratch".format(instance_name)
             else:
-                ovirt.finish(
-                    changed=False,
-                    msg=u"VM {} already exists".format(instance_name),
-                )
+                changed=False
+                msg=u"VM {} already exists".format(instance_name)
 
-        if state == 'started':
-            if initial_status == 'up' and (not wait_for_ip or (wait_for_ip and ovirt.get_ips())):
-                ovirt.finish(
-                    changed=False,
-                    msg=u"VM {} is already running".format(instance_name),
-                )
+        elif state == 'started':
+            if initial_status == 'up': # and (not wait_for_ip or (wait_for_ip and ovirt.get_ips())):
+                changed=False
+                msg=u"VM {} is already running".format(instance_name)
             else:
                 ovirt.vm_start()
-                ovirt.finish(
-                    changed=True,
-                    msg=u"VM {0:s} started".format(instance_name),
-                )
-
-        if state == 'cloud-init':
+                changed=True
+                msg=u"VM {0:s} started".format(instance_name)
+        elif state == 'cloud-init':
             ovirt.vm_cloud_init()
-            ovirt.finish(
-                changed=True,
-                msg=u"VM {0:s} started".format(instance_name),
-            )
-
-        if state == 'shutdown':
+            changed=True
+            msg=u"VM {0:s} started".format(instance_name)
+        elif state == 'shutdown':
             if initial_status == 'down':
-                ovirt.finish(
-                    changed=False,
-                    msg=u"VM {0:s} is already shutdown".format(instance_name),
-                )
+                changed=False
+                msg=u"VM {0:s} is already shutdown".format(instance_name)
             else:
                 ovirt.vm_stop()
-                ovirt.finish(
-                    changed=True,
-                    msg=u"VM {} is shutting down".format(instance_name),
-                )
-
-        if state == 'restart':
+                changed=True
+                msg=u"VM {} is shutting down".format(instance_name)
+        elif state == 'restart':
             if initial_status == 'up':
                 ovirt.vm_restart()
-                ovirt.finish(
-                    changed=True,
-                    msg=u"VM {0:s} is restarted".format(instance_name),
-                )
+                changed=True
+                msg=u"VM {0:s} is restarted".format(instance_name)
             else:
                 ovirt.vm_restart()
-                ovirt.finish(
-                    changed=True,
-                    msg=u"VM {0:s} was started".format(instance_name),
-                )
-
-        if state == 'absent':
+                changed=True
+                msg=u"VM {0:s} was started".format(instance_name)
+        elif state == 'absent':
             if initial_status == 'does_not_exist':
-                ovirt.finish(
-                    changed=False,
-                    msg=u"VM {0:s} does not exist".format(instance_name),
-                )
+                changed=False
+                msg=u"VM {0:s} does not exist".format(instance_name)
             else:
                 ovirt.vm_remove()
-                ovirt.finish(
-                    changed=True,
-                    msg=u"VM {0:s} removed".format(instance_name),
-                )
+                changed=True
+                msg=u"VM {0:s} removed".format(instance_name)
+        if wait_for_state is not None:
+            #  wait for the action ...
+            ovirt.wait_for_state(state=wait_for_state)
+        ovirt.finish(changed, msg)
 
 
 # import module snippets

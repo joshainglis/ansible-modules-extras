@@ -17,6 +17,7 @@
 # You should have received a copy of the GNU General Public License
 # along with Ansible. If not, see <http://www.gnu.org/licenses/>.
 
+# noinspection SqlNoDataSourceInspection
 DOCUMENTATION = '''
 ---
 module: ovirt
@@ -67,6 +68,7 @@ options:
     default: null
     required: false
     aliases: [ zone ]
+    version_added: "2.2"
   instance_disksize:
     description:
      - size of the instance's disk in GB
@@ -149,79 +151,79 @@ options:
      - absolute path to the public key to be inserted into authorized keys on instantiation
     default: null
     required: false
-    version_added: "2.0"
+    version_added: "2.2"
   authorized_key_user:
     description:
      - insert user key into authorized keys on instantiation
     default: 'root'
     required: false
-    version_added: "2.0"
+    version_added: "2.2"
   authorized_key_user_groups:
     description:
      - Groups to associate to the user. comma separated list
     default: null
     required: false
-    version_added: "2.0"
+    version_added: "2.2"
   tag:
     description:
      - comma separated list of tags
     default: null
     required: false
-    version_added: "2.0"
+    version_added: "2.2"
   wait_for_state:
     description:
      - Normally all actions are asyncronous. This defines that we should wait for a machine state to be reached before we progress.
     default: null
     required: false
-    version_added: "2.0"
+    version_added: "2.2"
   poll_frequency:
     description:
      - If we have set wait_for_state, this sets the poll_frequency (in seconds) at which to poll for the state of the VM
     default: 5
     required: false
-    version_added: "2.0"
+    version_added: "2.2"
   poll_timeout:
     description:
      - If we have set wait_for_state, this specifies the maximum number of seconds to wait for before returning with a failure condition.
     default: 180
     required: false
-    version_added: "2.0"
+    version_added: "2.2"
   custom_script:
     description:
       - A custom script to use with cloud-init. Must be an absolute path to a file
     default: null
     required: false
-    version_added: "2.0"
+    version_added: "2.2"
   instance_host_name:
     description:
       - a hostname to apply to the instance
     default: null
     required: false
-    version_added: "2.0"
+    version_added: "2.2"
   nic_name:
     description:
       - Name of the nic to apply a static ip address to
     default: null
     required: false
-    version_added: "2.0"
+    version_added: "2.2"
   static_ip_address:
     description:
       - a static IP address to assign to the instance
     default: null
     required: false
-    version_added: "2.0"
+    version_added: "2.2"
   static_netmask:
     description:
       - a static netmask address to assign to the instance
     default: null
     required: false
-    version_added: "2.0"
+    version_added: "2.2"
   static_gateway:
     description:
       - a static gateway IP address to assign to the instance
     default: null
     required: false
-    version_added: "2.0"
+    version_added: "2.2"
 
 requirements:
   - "python >= 2.6"
@@ -323,7 +325,7 @@ instance_data:
       returned: success
       type: string
       sample: up
-      choices: ['up', 'down', 'creating', 'starting' 'stopping', 'does_not_exist', 'unknown']
+      choices: ['up', 'down', 'creating', 'starting', 'stopping', 'does_not_exist', 'unknown']
     cluster:
       description: The ovirt cluster the instance is running on
       returned: success
@@ -1036,6 +1038,10 @@ def main():
             authorized_key_user=dict(
                 type='str',
                 default='root'
+            ),
+            authorized_key_user_groups=dict(
+                type='str',
+                default=None
             ),
             tags=dict(
                 type='str',

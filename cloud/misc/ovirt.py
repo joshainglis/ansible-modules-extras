@@ -323,7 +323,7 @@ instance_data:
       returned: success
       type: string
       sample: up
-      choices: ['up', 'down', 'creating', 'starting' 'stopping', 'does_not_exist', 'unknown']
+      choices: ['up', 'down', 'creating', 'starting', 'stopping', 'does_not_exist', 'unknown']
     cluster:
       description: The ovirt cluster the instance is running on
       returned: success

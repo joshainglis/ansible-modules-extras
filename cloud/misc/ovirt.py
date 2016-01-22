@@ -1037,6 +1037,10 @@ def main():
                 type='str',
                 default='root'
             ),
+            authorized_key_user_groups=dict(
+                type='str',
+                default=None
+            ),
             tags=dict(
                 type='str',
             ),

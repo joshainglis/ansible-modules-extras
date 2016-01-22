@@ -171,6 +171,7 @@ options:
   wait_for_state:
     description:
      - Normally all actions are asyncronous. This defines that we should wait for a machine state to be reached before we progress.
+    default: null
     required: false
     version_added: "2.0"
   poll_frequency:
@@ -422,6 +423,7 @@ class OvirtConnection(object):
     :type module: ansible.module_utils.basic.AnsibleModule
     :type conn: ovirtsdk.api.API
     :type tries: int
+    :type cloud_init_run: bool
     :type cloud_init_started: bool
     :type cloud_init_completed: bool
     """
@@ -634,7 +636,7 @@ class OvirtConnection(object):
         instance_name = self.module.params['instance_name']
         cluster = self.module.params['cluster']
         instance_disksize = self.module.params['instance_disksize']
-        instance_nic = self.module.params['instance_nic']
+        # instance_nic = self.module.params['instance_nic']
         instance_network = self.module.params['instance_network']
         instance_mem = self.module.params['instance_mem']
         disk_alloc = self.module.params['disk_alloc']
@@ -653,6 +655,7 @@ class OvirtConnection(object):
             cpu=params.CPU(topology=params.CpuTopology(cores=int(instance_cores))),
             type_=instance_type,
         )
+
         network_net = params.Network(name=instance_network)
         nic_net1 = params.NIC(name='nic1', network=network_net, interface='virtio')
 
@@ -727,10 +730,10 @@ class OvirtConnection(object):
         resource_type = self.module.params['resource_type']
 
         if resource_type == 'template':
-            #try:
-            self.create_vm_template()
-            #except Exception as e:
-            #    self.module.fail_json(msg=u'error deploying from template {} - {}'.format(image, e))
+            try:
+                self.create_vm_template()
+            except Exception as e:
+                self.module.fail_json(msg=u'error deploying from template {} - {}'.format(image, e))
         elif resource_type == 'new':
             try:
                 self.create_vm()
@@ -834,7 +837,6 @@ class OvirtConnection(object):
                 msg=u"Machine {} is in state '{}'. Will not start as you should investigate this".format(current_state ,instance_name)
             )
 
-
     def vm_stop(self):
         """
         Stop instance
@@ -894,7 +896,7 @@ class OvirtConnection(object):
         if instance_name not in set([vm.get_name() for vm in self.conn.vms.list()]):
             status = 'does_not_exist'
         else:
-            #status = OVIRT_STATE_MAP.get(self.conn.vms.get(name=instance_name).get_status().get_state(), 'unknown')
+            # status = OVIRT_STATE_MAP.get(self.conn.vms.get(name=instance_name).get_status().get_state(), 'unknown')
             status = self.conn.vms.get(name=instance_name).get_status().get_state()
         return status
 
@@ -928,7 +930,7 @@ class OvirtConnection(object):
         timeout = self.module.params['poll_timeout']
         elapsed = 0
         while elapsed < timeout:
-            #Check the machine state
+            # Check the machine state
             current_state = self.vm_status()
             print('%s %s' % (current_state, elapsed))
             if state == current_state:
@@ -1093,7 +1095,7 @@ def main():
     with OvirtConnection(module) as ovirt:
         initial_status = ovirt.vm_status()
         changed = False
-        error = False
+        # error = False
         msg = u'No action was taken'
 
         if state == 'present':
@@ -1101,56 +1103,55 @@ def main():
                 ovirt.instantiate()
                 if resource_type == 'template':
                     changed=True
-                    msg=u"deployed VM {} from template {}".format(instance_name, image)
+                    msg = u"deployed VM {} from template {}".format(instance_name, image)
                 elif resource_type == 'new':
-                    changed=True
-                    msg=u"deployed VM {} from scratch".format(instance_name)
+                    changed = True
+                    msg = u"deployed VM {} from scratch".format(instance_name)
             else:
-                changed=False
-                msg=u"VM {} already exists".format(instance_name)
+                changed = False
+                msg = u"VM {} already exists".format(instance_name)
 
         elif state == 'started':
             if initial_status == 'up': # and (not wait_for_ip or (wait_for_ip and ovirt.get_ips())):
-                changed=False
-                msg=u"VM {} is already running".format(instance_name)
+                changed = False
+                msg = u"VM {} is already running".format(instance_name)
             else:
                 ovirt.vm_start()
-                changed=True
-                msg=u"VM {0:s} started".format(instance_name)
+                changed = True
+                msg = u"VM {0:s} started".format(instance_name)
         elif state == 'cloud-init':
             ovirt.vm_cloud_init()
-            changed=True
-            msg=u"VM {0:s} started".format(instance_name)
+            changed = True
+            msg = u"VM {0:s} started".format(instance_name)
         elif state == 'shutdown':
             if initial_status == 'down':
-                changed=False
-                msg=u"VM {0:s} is already shutdown".format(instance_name)
+                changed = False
+                msg = u"VM {0:s} is already shutdown".format(instance_name)
             else:
                 ovirt.vm_stop()
-                changed=True
-                msg=u"VM {} is shutting down".format(instance_name)
+                changed = True
+                msg = u"VM {} is shutting down".format(instance_name)
         elif state == 'restart':
             if initial_status == 'up':
                 ovirt.vm_restart()
-                changed=True
-                msg=u"VM {0:s} is restarted".format(instance_name)
+                changed = True
+                msg = u"VM {0:s} is restarted".format(instance_name)
             else:
                 ovirt.vm_restart()
-                changed=True
-                msg=u"VM {0:s} was started".format(instance_name)
+                changed = True
+                msg = u"VM {0:s} was started".format(instance_name)
         elif state == 'absent':
             if initial_status == 'does_not_exist':
-                changed=False
-                msg=u"VM {0:s} does not exist".format(instance_name)
+                changed = False
+                msg = u"VM {0:s} does not exist".format(instance_name)
             else:
                 ovirt.vm_remove()
-                changed=True
-                msg=u"VM {0:s} removed".format(instance_name)
+                changed = True
+                msg = u"VM {0:s} removed".format(instance_name)
         if wait_for_state is not None:
             #  wait for the action ...
             ovirt.wait_for_state(state=wait_for_state)
         ovirt.finish(changed, msg)
-
 
 # import module snippets
 from ansible.module_utils.basic import *
